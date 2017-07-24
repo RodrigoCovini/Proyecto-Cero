@@ -1,0 +1,250 @@
+<!doctype html> 
+<html lang="en"> 
+<head> 
+<meta charset="UTF-8" />
+<title>Proyecto Cero</title>
+<script type="text/javascript" src="js/phaser.min.js"></script>
+<style type="text/css">
+body {margin: 0;
+cursor: crosshair;} /*Para no romperme la cabeza creando la mira y gastar recursos de la maquina para que mueva la imagen con el mouse, para el prototipo puse un cursor mira con css*/
+</style>
+</head>
+<body>
+<script type="text/javascript">
+var game = new Phaser.Game(800, 600, Phaser.AUTO, '', { preload: preload, create: create, update: update });
+
+//variables jugador
+var player;
+var playerVelocity = 5;
+var vivo = true;
+
+//Variable para movimiento
+var cursors;
+
+//variables balas
+var bullets;
+var fireRate = 180;
+var nextFire = 0;
+//variables zombies
+var zombies;
+var zombie;
+
+//sonidos
+var disparo;
+
+//colisiones
+var zombieCollisionGroup;	
+var bulletCollisionGroup;
+var playerCollisionGroup;
+
+var spawner;
+
+function preload() {
+
+	game.load.image('player','sprites/player.png');
+	game.load.image('bala','sprites/bala.png');
+	game.load.image('zombie','sprites/zombie.png');
+	game.load.image('mapa','sprites/mapa.png');
+	game.load.image('spawner','sprites/spawner.png');
+	game.load.audio('disparo','sonidos/disparo.ogg');
+
+	var upKey;
+	var downKey;
+	var leftKey;
+	var rightKey;
+	var spacebar;
+	
+	game.load.physics('physicsData', 'polygonjug.json');
+
+
+}
+
+function create() {
+	//Definir limites del mundo
+	game.world.setBounds(0, 0, 1708, 960);
+
+	//Enable P2
+	game.physics.startSystem(Phaser.Physics.P2JS);
+	game.physics.p2.setImpactEvents(true);
+	game.physics.p2.updateBoundsCollisionGroup();
+
+
+	//centrar pantalla del juego al medio
+	game.scale.pageAlignHorizontally = true;
+	game.scale.pageAlignVertically = true;
+	game.scale.refresh();
+
+	//crear sonido
+	disparo = game.add.audio('disparo');
+
+	//fondo
+	game.add.sprite(0,0,'mapa');
+	spawner = game.add.sprite(500,500,'spawner');
+	
+
+	cursors = game.input.keyboard.createCursorKeys();
+	
+	//balas
+	bullets = game.add.group();
+	bullets.enableBody = true;
+    bullets.physicsBodyType = Phaser.Physics.P2JS;
+
+    bullets.createMultiple(50, 'bala');
+    bullets.setAll('checkWorldBounds', true);
+    bullets.setAll('outOfBoundsKill', true);
+
+	playerCollisionGroup = game.physics.p2.createCollisionGroup();
+	zombieCollisionGroup = game.physics.p2.createCollisionGroup();	
+	bulletCollisionGroup = game.physics.p2.createCollisionGroup();
+	bullets.forEach(assignCollisionGroup);
+
+	//Crear player
+	player = game.add.sprite(80, 200, 'player');
+	//aumentar tamaño y setear anchor
+	player.scale.setTo(1.5);
+	player.anchor.setTo(0.5, 0.5);
+	
+	//zombies
+	zombies = game.add.group()
+	zombies.enableBody = true;
+	zombies.physicsBodyType = Phaser.Physics.P2JS;
+
+	//crear zombies
+	for(var i = 0; i < 8; i++){
+		// El jugador lo cree en el inicio del camino, me parecio mas copado que en el centro, Intente muchas cosas para que no se creen en la misma posicion del jugador pero no daba con la solucion. Esto me parecio lo mas simple. Ahora los Zombies se crean en una posicion aleatoria a 120 (supongo que px) del jugador.
+		zombie = zombies.create(game.rnd.integerInRange(200,900),game.rnd.integerInRange(320,1690), 'zombie');
+		zombie.body.clearShapes();
+		zombie.body.loadPolygon('physicsData', 'player');
+		zombie.body.setCollisionGroup(zombieCollisionGroup);
+		zombie.body.collides([zombieCollisionGroup, playerCollisionGroup]);
+		zombie.body.collides(bulletCollisionGroup, damageZombie);
+		zombie.scale.setTo(1.5);
+	}
+
+//fisicas
+	game.physics.p2.enable(player);
+	player.enableBody = true;
+	player.physicsBodyType = Phaser.Physics.P2JS;
+	player.body.clearShapes(); //new
+	player.body.loadPolygon('physicsData', 'player');
+
+	//colisiones
+	player.collideWorldBounds = true;
+	player.body.setCollisionGroup(playerCollisionGroup);
+	player.body.collides(zombieCollisionGroup, damagePlayer);
+
+	//Vida del zombie
+	zombie.health = 1;
+
+	timer = game.time.create(false);
+	timer.loop(5000, createZombie, this);
+	timer.start();
+
+	function assignCollisionGroup(bullet){
+		bullet.body.setRectangle(7);
+		bullet.body.setCollisionGroup(bulletCollisionGroup);
+		bullet.body.collides([bulletCollisionGroup,zombieCollisionGroup]);
+	}
+
+	//camara
+	game.camera.follow(player);
+
+}
+
+function update() {
+	//rotar jugador
+	rotatePlayer();
+
+	//movimiento
+	player.body.setZeroVelocity();
+	if (cursors.left.isDown){
+		player.body.moveLeft(400);
+	}else if (cursors.right.isDown){
+		player.body.moveRight(400);
+	}
+
+	if (cursors.up.isDown){
+		player.body.moveUp(400);
+	}else if (cursors.down.isDown){
+		player.body.moveDown(400);
+	}
+
+	//disparar
+	if (game.input.activePointer.isDown){
+		fire();
+	}
+
+	zombies.forEachAlive(movezombies,this);
+
+}
+
+function movezombies (zombies) { 
+     moveBullets(zombies,player,50);
+}
+
+function moveBullets (zombies,player,speed) {
+	var dx = player.body.x - zombies.x;
+	var dy = player.body.y - zombies.y;
+	zombiesRotation= Math.atan2(dy, dx);
+	zombies.body.rotation = zombiesRotation + game.math.degToRad(0);    
+	var angle = zombies.body.rotation + (Math.PI / 2);    
+	zombies.body.velocity.x = speed * Math.cos(angle - (Math.PI/2));    
+	zombies.body.velocity.y = speed * Math.sin(angle - (Math.PI/2));
+}
+
+	
+function fire() {
+	//  Ademas de esa condicion prueba que el jugador este vivo, de no ser asi la variable devuelve false y no se ejecuta el if (no dispara muerto)
+    if (game.time.now > nextFire && bullets.countDead() > 0 && vivo)
+    {
+        nextFire = game.time.now + fireRate;
+
+        var bullet = bullets.getFirstDead();
+        bullet.anchor.setTo(0.5, 0.5);
+        bullet.reset(player.x, player.y);
+        disparo.play();
+        // Por ahora vamos a tener que depender de la fisica ARCADE para mover las balas, la funcion moBullets la mochea un toque para esto o la estoy implementando mal
+        game.physics.arcade.moveToPointer(bullet, 800);
+        bullet.body.collideWorldBounds = false; // Las balas no colisionan con los bordes del mundo y estan seteadas mas arriba para que mueran cuando traspasan los limites. Por lo tanto nunca se acaban
+    }
+
+}
+
+function rotatePlayer(){
+	var targetAngle = (360 / (2 * Math.PI)) * game.math.angleBetween(
+          player.x-game.camera.x, player.y-game.camera.y,
+          this.game.input.activePointer.x, this.game.input.activePointer.y);
+
+		  
+        if(targetAngle < 0)
+            targetAngle += 360;
+        player.body.angle = targetAngle;
+}
+
+
+function damageZombie(body1, body2){
+
+	body2.sprite.damage(1);
+	body1.sprite.damage(1);
+	
+}
+
+function damagePlayer(body1, body2){
+ 
+  body1.sprite.damage(1);
+}
+
+
+function createZombie(){
+	zombie = zombies.create(spawner.x+(spawner.width/2),spawner.y+(spawner.height/2), 'zombie');
+	zombie.scale.setTo(1.5);	
+	zombie.body.clearShapes();
+	zombie.body.loadPolygon('physicsData', 'player');
+	zombie.body.setCollisionGroup(zombieCollisionGroup);
+	zombie.body.collides([zombieCollisionGroup, playerCollisionGroup]);
+	zombie.body.collides(bulletCollisionGroup, damageZombie);
+	zombie.health = 5;
+}
+</script>
+</body>
+</html>
